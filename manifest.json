@@ -1,0 +1,24 @@
+{
+  "name": "INFOBRIDGE Reader",
+  "short_name": "IB Reader",
+  "description": "Secure, offline decoder for the INFOBRIDGE ecosystem.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8f9fa",
+  "theme_color": "#1a73e8",
+  "icons": [
+    {
+      "src": "images/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "images/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

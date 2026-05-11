@@ -1,0 +1,68 @@
+INFOBRIDGE Reader - Quick Start & Troubleshooting Guide
+=====================================================
+
+INFOBRIDGE Reader is a secure, offline-first Progressive Web App (PWA). 
+To maintain the integrity of the Service Worker and enable "Standalone Mode" 
+(which removes the URL bar to prevent scanner leakage), the application 
+must be accessed within a Secure Context (HTTPS or localhost).
+
+1. DEPLOYMENT OPTIONS FOR AIR-GAPPED ENVIRONMENTS
+-------------------------------------------------
+For secure, air-gapped workstations, choose one of the following institutional 
+deployment methods:
+
+Method A: Institutional Intranet Server (Recommended)
+The most robust approach for medical and government facilities is to host the 
+extracted ZIP contents on an Internal Web Server or Institutional Intranet.
+- Requirement: Serve via https:// (or http:// for trusted intranet domains).
+- Benefit: Enables centralized updates and allows all authorized workstations 
+  to "Install" the Reader as a native-feeling standalone app.
+
+Method B: Local Secure Context (Workstation Level)
+If a central server is unavailable, you must create a local secure context 
+on the workstation:
+1. Download: Visit the Latest Releases page and download the versioned ZIP 
+   file named INFOBRIDGE-Reader-vX.X.X.zip. Extract it to a local directory.
+   (https://github.com/icommuse/INFOBRIDGE-Reader/releases/latest)
+2. Launch Local Host: Initialize a local listener (requires Python):
+   cd /path/to/INFOBRIDGE-Reader
+   python3 -m http.server 8080
+3. Access: Navigate to http://localhost:8080/index.html.
+4. Finalize: Use the browser's "Install App" feature to move the utility into 
+   its own secure, URL-bar-free application window.
+
+
+2. HOW TO INSTALL AS A STANDALONE APP (PWA)
+-------------------------------------------
+Once the page is running on a server (Intranet or localhost), you can 
+install it as a native-like app:
+
+- Google Chrome / Microsoft Edge: 
+  Click the "Install" icon in the address bar, or use the menu (...) 
+  > Save and Share > Install page as app.
+  
+- Safari (Mac): 
+  Go to File > Add to Dock, or use the Share menu > Add to Dock.
+
+- Safari (iOS/iPadOS): 
+  Tap the Share button > Add to Home Screen.
+
+
+3. TROUBLESHOOTING: SCANNED TEXT LEAKING INTO URL BAR
+-----------------------------------------------------
+If your scanner input enters the browser's URL bar instead of the app, 
+it is usually because the browser window has lost focus.
+
+The definitive solution is to Install as a PWA (see Section 2). A standalone 
+window has no URL bar, which is the most effective way to prevent leakage.
+
+If the problem persists:
+1. Ensure Focus: Click the "Waiting for Scan..." area before scanning.
+2. Scanner Configuration: Ensure your scanner hardware is set to 
+   "Alt Numpad (Universal) Mode".
+3. IT Admin Support: Contact your IT Administrator to facilitate the 
+   deployment or to configure "Kiosk Mode" on the workstation.
+
+
+-----------------------------------------------------
+(c) 2026 INFOBRIDGE Ecosystem. All rights reserved.

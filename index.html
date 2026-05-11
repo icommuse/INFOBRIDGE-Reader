@@ -1,0 +1,1467 @@
+<!--
+  INFOBRIDGE Reader: The Secure Decoder for the INFOBRIDGE Ecosystem
+
+  Source:  https://github.com/icommuse/INFOBRIDGE-Reader
+  License: Apache License 2.0
+  Copyright (c) 2026 Koichiro Watanabe. All rights reserved.
+
+  Technical Overview:
+  - Purpose: Secure, offline reassembly and decoding of multi-part QR data.
+  - Security: AES-256-GCM decryption via browser-native WebCrypto API.
+  - Privacy: Zero-installation, zero-network, local-only processing.
+-->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self';">
+    <meta name="theme-color" content="#1a73e8">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="images/icon-512.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="IB Reader">
+    <title>INFOBRIDGE Reader - Global Transfer</title>
+    <style>
+        :root {
+            /* Neutral (Ready) state - Now Green to indicate "Ready to Scan" */
+            --primary: #34a853;
+            --bg: #f8f9fa;
+            --card-bg: #ffffff;
+            --text: #202124;
+            --text-secondary: #5f6368;
+            --error: #ea4335;
+            --focus-bg: #e6f4ea;
+            --focus-color: #137333;
+            --glow: rgba(52, 168, 83, 0.3);
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Base64 Theme (Blue) */
+        .theme-base64 {
+            --primary: #1a73e8;
+            --focus-bg: #e8f0fe;
+            --focus-color: #1967d2;
+            --glow: rgba(26, 115, 232, 0.4);
+        }
+
+        /* Secret Theme (Green) */
+        .theme-secret {
+            --primary: #34a853;
+            --focus-bg: #e6f4ea;
+            --focus-color: #137333;
+            --glow: rgba(52, 168, 83, 0.4);
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            transition: background-color 0.5s ease;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin-top: 40px;
+        }
+
+        .main-card {
+            background: var(--card-bg);
+            padding: 32px;
+            border-radius: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(0, 0, 0, 0.03);
+            transition: var(--transition);
+        }
+
+        h1 {
+            font-size: 1.75rem;
+            margin: 0 0 12px 0;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: color 0.5s ease;
+        }
+
+        h1 svg {
+            width: 32px;
+            height: 32px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 32px;
+            font-size: 0.95rem;
+        }
+
+        #qrInput {
+            position: fixed;
+            top: 0;
+            left: -1000px;
+            width: 10px;
+            height: 10px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .focus-indicator {
+            padding: 16px;
+            background: var(--focus-bg);
+            color: var(--focus-color);
+            border-radius: 12px;
+            text-align: center;
+            margin-bottom: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: var(--transition);
+            border: 3px solid #e0e0e0;
+            /* Gray border by default */
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 var(--glow);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(26, 115, 232, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(26, 115, 232, 0);
+            }
+        }
+
+        /* Active focus indicator inherits theme colors automatically via CSS vars */
+        .focus-indicator.active {
+            border-color: var(--primary);
+            background: var(--focus-bg);
+            color: var(--focus-color);
+        }
+
+        /* Activation Overlay */
+        #activationOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            z-index: 1000;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            transition: opacity 0.3s ease;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch; /* Smooth scroll for iOS */
+            padding: 40px 20px;
+        }
+
+        .overlay-content {
+            text-align: center;
+            padding: 40px;
+            background: white;
+            border-radius: 32px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+            margin: 0 auto; /* Center horizontally */
+        }
+
+        .overlay-content svg {
+            width: 64px;
+            height: 64px;
+            color: var(--primary);
+            margin-bottom: 20px;
+        }
+
+        .focus-indicator.error {
+            background: #fce8e6;
+            color: var(--error);
+            animation: shake 0.5s linear;
+            border-color: var(--error);
+        }
+
+        @keyframes shake {
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-5px);
+            }
+
+            75% {
+                transform: translateX(5px);
+            }
+        }
+
+        .session-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 16px;
+            background: #fff;
+            transition: var(--transition);
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .session-id {
+            font-family: 'Cascadia Code', 'Consolas', monospace;
+            font-weight: 600;
+            color: #3c4043;
+            background: #f1f3f4;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+
+        .progress-text {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .qr-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .qr-icon {
+            aspect-ratio: 1;
+            background: #f1f3f4;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #bdc1c6;
+            transition: var(--transition);
+        }
+
+        .qr-icon svg {
+            width: 24px;
+            height: 24px;
+            display: block;
+        }
+
+        .qr-icon.scanned {
+            background: var(--focus-bg);
+            color: var(--primary);
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px var(--glow);
+        }
+
+        .qr-icon.loading {
+            background: #e4e4e4;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(25, 103, 210, 0.2);
+            border-top: 3px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        #finalResult {
+            margin-top: 32px;
+            display: none;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        .result-header {
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--primary);
+        }
+
+        #decodedOutput {
+            background: #fafafa;
+            border: 1px solid #eee;
+            border-left: 4px solid var(--primary);
+            padding: 20px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            border-radius: 12px;
+            font-size: 1rem;
+            line-height: 1.6;
+            color: var(--text);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .btn-clear {
+            margin-top: 24px;
+            padding: 12px 24px;
+            background: #f1f3f4;
+            color: var(--text);
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+            width: 100%;
+        }
+
+        .btn-clear:hover {
+            background: #e8eaed;
+        }
+
+        .btn-reset-top {
+            margin-left: auto;
+            background: #f1f3f4;
+            border: none;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: var(--transition);
+        }
+
+        .btn-reset-top:hover {
+            background: #e8eaed;
+            color: var(--error);
+            transform: rotate(-30deg);
+        }
+
+        @keyframes rotate360 {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(-360deg);
+            }
+        }
+
+        .rotate-anim {
+            animation: rotate360 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Modal Styles (for Secret mode) */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.4);
+            display: none;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch; /* Smooth scroll for iOS */
+            padding: 40px 20px;
+        }
+
+        .modal {
+            background: white;
+            padding: 32px;
+            border-radius: 24px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            margin: 0 auto; /* Center horizontally */
+        }
+
+        .modal h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #34a853;
+        }
+
+        .modal input {
+            width: 100%;
+            padding: 12px;
+            margin: 16px 0;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+
+        .modal-btns {
+            display: flex;
+            gap: 12px;
+        }
+
+        .modal-btns button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .btn-confirm {
+            background: #34a853;
+            color: white;
+            font-size: 1rem;
+        }
+
+        .btn-cancel {
+            background: #eee;
+            font-size: 1rem;
+        }
+    </style>
+</head>
+
+<body class="theme-neutral">
+
+    <div class="container">
+        <div class="main-card">
+            <h1 id="mainTitle">
+                <div id="titleIcon">
+                    <img src="images/icon-512.png" alt="Icon" style="width: 32px; height: 32px; border-radius: 8px;">
+                </div>
+                <span id="titleText">INFOBRIDGE Reader</span>
+                <button class="btn-reset-top" onclick="resetAll()" title="Reset all data">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                        <path d="M3 3v5h5"></path>
+                    </svg>
+                </button>
+            </h1>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+                <div>
+                    <p class="subtitle" id="mainSubtitle" style="margin: 0 0 4px 0;">Now, you can start scanning QR codes.</p>
+                    <a href="#" onclick="openQaModal(); return false;" style="color: #1a73e8; text-decoration: underline; font-size: 0.8rem;">Troubleshooting / Q&A</a>
+                </div>
+                <select id="layoutCorrection"
+                    style="font-size: 0.7rem; padding: 4px 6px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1); background: transparent; color: #5f6368; outline: none; cursor: pointer; max-width: 140px;"
+                    title="Keyboard Layout Correction">
+                    <option value="none" selected>ALT (Universal) Mode</option>
+                    <option value="us_english">US (English)</option>
+                    <option value="jis">JIS (JP)</option>
+                    <option value="azerty_fr">AZERTY (FR)</option>
+                    <option value="qwertz_de">QWERTZ (DE)</option>
+                    <option value="qwerty_es">QWERTY (ES)</option>
+                    <option value="qwerty_it">QWERTY (IT)</option>
+                    <option value="nordic">Nordic (SE/FI/NO/DK)</option>
+                    <option value="portuguese">Portuguese (PT/BR)</option>
+                    <option value="cyrillic">Cyrillic (RU)</option>
+                    <option value="korean">Korean (KR)</option>
+                    <option value="thai">Thai (TH)</option>
+                </select>
+            </div>
+
+            <div class="focus-indicator" id="focusStatus" onclick="qrInput.focus()">
+                Scan Now (Click to Focus)
+            </div>
+
+            <!-- Activation Overlay (Scanner Configuration Selector) -->
+            <div id="activationOverlay" class="activation-overlay">
+                <div class="overlay-content"
+                    style="max-width: 580px; text-align: left; padding: 40px; background: white; border-radius: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.15);">
+                    <h2 style="margin-top: 0; color: #202124; font-size: 2.4rem; margin-bottom: 8px; display: flex; align-items: center; gap: 12px;">
+                        <img src="images/icon-512.png" alt="Icon" style="width: 36px; height: 36px; border-radius: 8px;">
+                        INFOBRIDGE Reader
+                    </h2>
+                    <p style="color: #5f6368; font-size: 0.9rem; margin-bottom: 32px;">Before scanning, please ensure
+                        your scanner is configured to match one of the options below:</p>
+
+                    <div style="display: flex; flex-direction: column; gap: 20px;">
+                        <!-- Option 1: ALT (Universal) Mode -->
+                        <label class="config-option"
+                            style="display: block; padding: 20px; border: 2px solid #e8eaed; border-radius: 16px; cursor: pointer; transition: all 0.2s; position: relative;">
+                            <input type="radio" name="initialLayout" value="none"
+                                style="position: absolute; top: 22px; left: 20px;" checked>
+                            <div style="margin-left: 32px;">
+                                <span style="font-weight: bold; color: #1a73e8; font-size: 1.05rem;">Option A: Enable
+                                    ALT (Universal) Mode</span>
+                                <div
+                                    style="color: #1a73e8; font-size: 0.75rem; font-weight: 600; margin-top: 4px; text-transform: uppercase;">
+                                    Highly Recommended</div>
+                                <p style="font-size: 0.85rem; color: #3c4043; margin: 12px 0 0 0; line-height: 1.5;">
+                                    <b>Action:</b> Set your scanner hardware to <b>"Alt Numpad"</b> or <b>"Universal
+                                        Mode"</b>. This ensures error-free input regardless of your computer's regional
+                                    settings.
+                                </p>
+                            </div>
+                        </label>
+
+                        <!-- Option 2: Keyboard Layout Sync -->
+                        <label class="config-option"
+                            style="display: block; padding: 20px; border: 2px solid #e8eaed; border-radius: 16px; cursor: pointer; transition: all 0.2s; position: relative;">
+                            <input type="radio" name="initialLayout" value="sync"
+                                style="position: absolute; top: 22px; left: 20px;">
+                            <div style="margin-left: 32px;">
+                                <span style="font-weight: bold; color: #202124; font-size: 1.05rem;">Option B: Match PC
+                                    Keyboard Layout</span>
+                                <p style="font-size: 0.85rem; color: #3c4043; margin: 12px 0 8px 0; line-height: 1.5;">
+                                    <b>Action:</b> Set your scanner to match your computer's regional layout, then
+                                    select it below:
+                                </p>
+                                <select id="initialLayoutSelect"
+                                    style="display: block; width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd; background: #fafafa; font-size: 0.9rem;">
+                                    <option value="us_english">US (English)</option>
+                                    <option value="jis">JIS (Japan)</option>
+                                    <option value="azerty_fr">AZERTY (France)</option>
+                                    <option value="qwertz_de">QWERTZ (Germany)</option>
+                                    <option value="qwerty_es">QWERTY (Spain)</option>
+                                    <option value="qwerty_it">QWERTY (Italy)</option>
+                                    <option value="nordic">Nordic (SE/FI/NO/DK)</option>
+                                    <option value="portuguese">Portuguese (PT/BR)</option>
+                                    <option value="cyrillic">Cyrillic (Russia)</option>
+                                    <option value="korean">Korean (KR)</option>
+                                    <option value="thai">Thai (TH)</option>
+                                </select>
+                            </div>
+                        </label>
+                    </div>
+
+                    <button class="btn-primary" onclick="confirmScannerSetup()"
+                        style="width: 100%; margin-top: 32px; padding: 18px; font-weight: bold; border-radius: 14px; font-size: 1.1rem; background: #1a73e8; color: white; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(26,115,232,0.2);">
+                        Apply Settings & Start Scanning
+                    </button>
+
+                    <div
+                        style="margin-top: 24px; color: #5f6368; font-size: 0.75rem; text-align: center; line-height: 1.5; background: #f8f9fa; padding: 12px; border-radius: 8px;">
+                        <span style="font-weight: bold; color: #d93025;">⚠️ User Responsibility: Scanner Hardware
+                            Configuration</span><br>
+                        To mitigate OS-level risks, it is the user's sole responsibility to ensure their scanner
+                        hardware is configured to <b>disable the transmission of control characters and GUI/Modifier
+                            keys</b>.<br>
+                        <span style="color: #d93025; font-weight: bold;">Do not scan unknown QR codes.</span>
+                    </div>
+
+                    <p style="margin-top: 16px; color: #9aa0a6; font-size: 0.7rem; text-align: center;">
+                        Data is processed locally in the browser. No information is uploaded.
+                    </p>
+                    <div style="margin-top: 16px; text-align: center;">
+                        <a href="#" onclick="openQaModal(); return false;" style="color: #1a73e8; text-decoration: underline; font-size: 0.85rem; font-weight: bold;">Troubleshooting / Q&A</a>
+                    </div>
+                </div>
+            </div>
+
+            <div id="scanFeedback"
+                style="text-align: center; margin-top: 16px; margin-bottom: 16px; font-size: 0.8rem; color: var(--primary); font-weight: bold; opacity: 0; transition: opacity 0.5s;">
+                ✓ Scan successful
+            </div>
+
+            <div id="errorMessage"
+                style="display: none; background: #fce8e6; color: var(--error); padding: 12px; border-radius: 12px; font-size: 0.85rem; margin-bottom: 16px; border: 1px solid #f1c4c4; white-space: pre-wrap;">
+            </div>
+
+            <input type="password" id="qrInput" autocomplete="off" inputmode="latin">
+
+            <div id="sessionList"></div>
+
+            <div id="finalResult" style="display: none;">
+                <div class="result-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    <span id="resultTitle">Complete</span>
+                </div>
+                <div id="decodedOutput"></div>
+            </div>
+
+            <details id="debugSection" style="margin-top: 32px;">
+                <summary
+                    style="font-size: 0.85rem; font-weight: bold; color: var(--text-secondary); margin-bottom: 8px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                    Scan Log (Debug)
+                </summary>
+                <textarea id="scanLog" readonly
+                    style="width: 100%; height: 100px; border-radius: 12px; border: 1px solid #ddd; padding: 12px; font-family: monospace; font-size: 0.8rem; background: #fafafa; resize: none; box-sizing: border-box; margin-top: 8px;"></textarea>
+            </details>
+
+            <div
+                style="margin-top: 48px; padding-top: 16px; border-top: 1px solid #f1f3f4; display: flex; justify-content: space-between; color: #9aa0a6; font-size: 0.7rem;">
+                <a href="https://github.com/icommuse/INFOBRIDGE-Reader" target="_blank"
+                    style="color: #9aa0a6; text-decoration: none;">GitHub: INFOBRIDGE-Reader</a>
+                <div id="pwaStatus" style="display: flex; align-items: center; gap: 4px;">
+                    <span style="width: 6px; height: 6px; background: #9aa0a6; border-radius: 50%;"></span>
+                    <span>Offline Ready</span>
+                </div>
+                <span>© 2026 INFOBRIDGE</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="passwordModal">
+        <div class="modal">
+            <h2>Enter Password</h2>
+            <p>All secure data for session <span id="modalSid"></span> collected. Please enter the password.</p>
+            <input type="password" id="passwordInput" placeholder="Password">
+            <div class="modal-btns">
+                <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+                <button class="btn-confirm" onclick="submitPassword()">Decrypt</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Troubleshooting & Q&A Modal -->
+    <div class="modal-overlay" id="qaModal">
+        <div class="modal" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; padding: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0; color: #1a73e8; font-size: 1.3rem;">Troubleshooting / Q&A</h2>
+                <button onclick="closeQaModal()" style="background: none; border: none; font-size: 1.8rem; cursor: pointer; color: #5f6368; padding: 0; line-height: 1;">&times;</button>
+            </div>
+            
+            <div id="qaContainer" style="overflow-y: auto; flex-grow: 1; padding-right: 8px;">
+                <!-- Q&A Item 1: URL Bar Leaks -->
+                <details class="qa-item" style="margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 12px;" open>
+                    <summary style="font-weight: bold; cursor: pointer; color: #202124; outline: none;">
+                        Q: Scanned text is leaking into the browser's URL bar (search bar).
+                    </summary>
+                    <div style="margin-top: 12px; font-size: 0.9rem; color: #3c4043; line-height: 1.6;">
+                        <p style="margin-top: 0;"><b>A:</b> This happens when the browser window loses focus during a scan. Please try the following:</p>
+                        <ol style="padding-left: 20px; margin-bottom: 0;">
+                            <li style="margin-bottom: 8px;"><b>Install as Standalone App (PWA) — Recommended:</b> Hosting this tool on a server (Intranet or Local) allows you to install it as a PWA. This removes the URL bar entirely and prevents leakage. <b>(Refer to the guide below for steps)</b></li>
+                            <li style="margin-bottom: 8px;"><b>Ensure Focus:</b> Before scanning, click the "Waiting for Scan..." area. Ensure the border is pulsing blue.</li>
+                            <li><b>Scanner Configuration:</b> Ensure your scanner hardware is set to "Alt Numpad (Universal) Mode".</li>
+                        </ol>
+                    </div>
+                </details>
+
+                <!-- Q&A Item 2: Unified Installation Guide -->
+                <details class="qa-item" style="margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; padding: 12px;">
+                    <summary style="font-weight: bold; cursor: pointer; color: #202124; outline: none;">
+                        Q: How do I install this as a Standalone App (PWA)?
+                    </summary>
+                    <div style="margin-top: 12px; font-size: 0.9rem; color: #3c4043; line-height: 1.6;">
+                        <p style="margin-top: 0;"><b>A:</b> Installing as a <b>Standalone App (PWA)</b> provides a native app experience, removes the browser's URL bar, and enables "Offline Ready" features. Follow these steps:</p>
+                        
+                        <ol style="padding-left: 20px; margin: 0;">
+                            <!-- Step 1 -->
+                            <li style="margin-bottom: 16px;">
+                                <p style="margin: 0 0 8px 0;"><b>Step 1: Establish a Secure Hosting Context</b></p>
+                                <p style="margin-top: 0; margin-bottom: 8px; font-size: 0.85rem;">PWA features (Standalone Mode and Service Worker lifecycle) require a <b>Secure Context</b>. Access via the <code>file://</code> protocol disables these critical security layers.</p>
+                                <ul style="padding-left: 20px; margin-bottom: 8px; font-size: 0.85rem;">
+                                    <li style="margin-bottom: 6px;"><b>Institutional Server (Primary Recommendation):</b> Deploy the Reader files to your organization's internal web server (Intranet/Portal). This ensures <b>Host Isolation</b> and allows the utility to be installed as a standalone PWA across all authorized endpoints.</li>
+                                    <li>
+                                        <b>Workstation-Level Listener (Localhost):</b> If a central server is unavailable, initialize a local secure context (e.g., via Python) to facilitate PWA installation:
+                                        <pre style="background: #f1f3f4; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 0.8rem; margin: 10px 0;">cd /path/to/INFOBRIDGE-Reader
+python3 -m http.server 8080</pre>
+                                        <p style="margin-top: 0;">Then access via: <a href="http://localhost:8080/index.html" target="_blank">http://localhost:8080/index.html</a>.</p>
+                                    </li>
+                                </ul>
+                            </li>
+
+                            <!-- Step 2 -->
+                            <li style="margin-bottom: 16px;">
+                                <p style="margin: 0 0 8px 0;"><b>Step 2: Install in Browser</b></p>
+                                <p style="margin-top: 0; margin-bottom: 8px; font-size: 0.85rem;">Once running on a server, use the browser's menu to install:</p>
+                                <ul style="padding-left: 20px; margin-bottom: 0; font-size: 0.85rem;">
+                                    <li style="margin-bottom: 6px;"><b>Chrome / Edge:</b> Click <b>"Install"</b> in the address bar or <b>... > Save and Share > Install</b>.</li>
+                                    <li style="margin-bottom: 6px;"><b>Safari (Mac):</b> Go to <b>File > Add to Dock</b>, or <b>Share > Add to Dock</b>.</li>
+                                    <li><b>Safari (iOS):</b> Tap <b>Share > Add to Home Screen</b>.</li>
+                                </ul>
+                            </li>
+                        </ol>
+
+                        <p style="margin-top: 16px; font-size: 0.85rem; color: #5f6368; border-top: 1px solid #eee; padding-top: 12px;">
+                            <b>IT Admin Support:</b> Setting up an internal server or using the terminal often requires administrative privileges. Please contact your IT Administrator to facilitate the deployment or if scanner input continues to leak into the URL bar (e.g., to configure "Kiosk Mode" or adjust OS-level HID settings).
+                        </p>
+                    </div>
+                </details>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // PWA Service Worker Registration
+        // ============================================================
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').then(reg => {
+                    console.log('SW registered:', reg);
+                    document.getElementById('pwaStatus').querySelector('span').style.background = '#34a853';
+                }).catch(err => console.log('SW failed:', err));
+            });
+        }
+
+        // ============================================================
+        // DOM References (cached at startup)
+        // ============================================================
+        const qrInput = document.getElementById('qrInput');
+        const focusStatus = document.getElementById('focusStatus');
+        const sessionList = document.getElementById('sessionList');
+        const finalResult = document.getElementById('finalResult');
+        const decodedOutput = document.getElementById('decodedOutput');
+        const passwordModal = document.getElementById('passwordModal');
+        const qaModal = document.getElementById('qaModal');
+        const passwordInput = document.getElementById('passwordInput');
+        const modalSid = document.getElementById('modalSid');
+        const mainTitle = document.getElementById('titleText');
+        const mainSubtitle = document.getElementById('mainSubtitle');
+        const titleIcon = document.getElementById('titleIcon');
+        const activationOverlay = document.getElementById('activationOverlay');
+        const errorArea = document.getElementById('errorMessage');
+        const scanLog = document.getElementById('scanLog');
+        const scanFeedback = document.getElementById('scanFeedback');
+
+        // ============================================================
+        const SECRET_KDF = 'pbkdf2-sha256';
+        const SECRET_KDF_ITERATIONS = 600000;
+
+        // State  ('G' = Base64 mode, 'S' = Secret/AES-256 mode)
+        // ============================================================
+        let qrBuffer = {}; // { [sid]: { total, parts, mode } }
+        let activeSid = null; // SID currently awaiting password
+        var currentMode = null; // active scan mode (null = not yet determined)
+
+        // ============================================================
+        // Security / Behavior Constants (for audit traceability)
+        // ============================================================
+        const MAX_DECRYPT_ATTEMPTS = 10;
+        const FOCUS_POLL_MS = 500;
+
+        // ============================================================
+        // Audit Map (high-level data path)
+        // 1) Scanner input capture -> 2) format normalization ->
+        // 3) security gate checks -> 4) packet parse ->
+        // 5) chunk assembly -> 6) decode/decrypt (local only)
+        // ============================================================
+
+        // ============================================================
+        // SVG Icons
+        // ============================================================
+        // Full <svg> for unscanned grid slots (fixed gray, no currentColor)
+        const standardIcon = '<svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;"><g transform="matrix(2.33333,0,0,2.33333,-13.3333,-13.3333)"><rect x="7" y="7" width="3" height="3" style="fill:none;stroke:rgb(189,193,198);stroke-width:0.86px;"/></g><g transform="matrix(2.33333,0,0,2.33333,-2.33333,-13.3333)"><rect x="7" y="7" width="3" height="3" style="fill:none;stroke:rgb(189,193,198);stroke-width:0.86px;"/></g><g transform="matrix(2.33333,0,0,2.33333,-13.3333,-1.77984)"><rect x="7" y="7" width="3" height="3" style="fill:none;stroke:rgb(189,193,198);stroke-width:0.86px;"/></g><g transform="matrix(0.666667,0,0,0.666667,7.16667,0.833333)"><rect x="14" y="7" width="3" height="3" style="fill:rgb(189,193,198);stroke:rgb(189,193,198);stroke-width:1.5px;"/></g><g transform="matrix(0.666667,0,0,0.666667,-3.83333,0.833333)"><rect x="14" y="7" width="3" height="3" style="fill:rgb(189,193,198);stroke:rgb(189,193,198);stroke-width:1.5px;"/></g><g transform="matrix(0.666667,0,0,0.666667,-3.83333,12.3868)"><rect x="14" y="7" width="3" height="3" style="fill:rgb(189,193,198);stroke:rgb(189,193,198);stroke-width:1.5px;"/></g><g transform="matrix(0.666667,0,0,0.666667,7.16667,12.3868)"><rect x="14" y="7" width="3" height="3" style="fill:rgb(189,193,198);stroke:rgb(189,193,198);stroke-width:1.5px;"/></g></svg>';
+        // Inner <g> elements only for titleIcon (inherits currentColor → theme color)
+        const SVG_QR = '<g transform="matrix(2.33333,0,0,2.33333,-13.3333,-13.3333)"><rect x="7" y="7" width="3" height="3" style="fill:none;stroke:currentColor;stroke-width:0.86px;"/></g><g transform="matrix(2.33333,0,0,2.33333,-2.33333,-13.3333)"><rect x="7" y="7" width="3" height="3" style="fill:none;stroke:currentColor;stroke-width:0.86px;"/></g><g transform="matrix(2.33333,0,0,2.33333,-13.3333,-1.77984)"><rect x="7" y="7" width="3" height="3" style="fill:none;stroke:currentColor;stroke-width:0.86px;"/></g><g transform="matrix(0.666667,0,0,0.666667,7.16667,0.833333)"><rect x="14" y="7" width="3" height="3" style="fill:currentColor;stroke:currentColor;stroke-width:1.5px;"/></g><g transform="matrix(0.666667,0,0,0.666667,-3.83333,0.833333)"><rect x="14" y="7" width="3" height="3" style="fill:currentColor;stroke:currentColor;stroke-width:1.5px;"/></g><g transform="matrix(0.666667,0,0,0.666667,-3.83333,12.3868)"><rect x="14" y="7" width="3" height="3" style="fill:currentColor;stroke:currentColor;stroke-width:1.5px;"/></g><g transform="matrix(0.666667,0,0,0.666667,7.16667,12.3868)"><rect x="14" y="7" width="3" height="3" style="fill:currentColor;stroke:currentColor;stroke-width:1.5px;"/></g>';
+
+        // ============================================================
+        // Focus Management
+        // ============================================================
+        function setFocusIndicator(state, message) {
+            // state: 'active' | 'error'
+            focusStatus.classList.remove('active', 'error');
+            focusStatus.classList.add(state);
+            focusStatus.innerText = message;
+        }
+
+        function confirmScannerSetup() {
+            const selectedOption = document.querySelector('input[name="initialLayout"]:checked').value;
+            const mainLayoutSelect = document.getElementById('layoutCorrection');
+            const initialLayoutSelect = document.getElementById('initialLayoutSelect');
+
+            if (selectedOption === 'none') {
+                mainLayoutSelect.value = 'none';
+            } else if (selectedOption === 'sync') {
+                mainLayoutSelect.value = initialLayoutSelect.value;
+            }
+
+            // Apply the chosen layout to the current decoding logic
+            redecodeCurrentSession();
+
+            // Proceed to activate
+            activateScanner();
+        }
+
+        function activateScanner() {
+            activationOverlay.style.opacity = '0';
+            activationOverlay.style.pointerEvents = 'none';
+            setTimeout(() => activationOverlay.style.display = 'none', 300);
+            qrInput.focus();
+        }
+
+        let isLayoutFocused = false;
+        const layoutSelect = document.getElementById('layoutCorrection');
+        function onLayoutSelectionChange() {
+            isLayoutFocused = false;
+            redecodeCurrentSession();
+        }
+
+        layoutSelect.addEventListener('mousedown', () => {
+            isLayoutFocused = true;
+        });
+        layoutSelect.addEventListener('change', onLayoutSelectionChange);
+        layoutSelect.addEventListener('blur', () => {
+            isLayoutFocused = false;
+        });
+
+        function ensureFocus() {
+            if (isLayoutFocused) return;
+            if (activationOverlay.style.display !== 'none') return;
+            if (passwordModal.style.display === 'flex') return;
+            if (qaModal.style.display === 'flex') return;
+
+            if (document.activeElement !== qrInput &&
+                document.activeElement !== passwordInput &&
+                document.activeElement !== layoutSelect) {
+
+                // Show a warning if focus is lost during a potential scan
+                if (!isLayoutFocused) {
+                    setFocusIndicator('error', '⚠️ FOCUS LOST - CLICK TO RESTORE');
+                }
+                qrInput.focus();
+            } else {
+                setFocusIndicator('active', 'Scan Now');
+            }
+        }
+
+        // Global key interceptor: If user starts typing (scanning) while not focused, 
+        // immediately pull focus to the QR input to prevent data leak to URL bar.
+        window.addEventListener('keydown', (e) => {
+            // Ignore system keys and navigation
+            if (e.key === 'Tab' || e.key === 'Escape' || e.altKey) return;
+
+            if (document.activeElement !== qrInput &&
+                document.activeElement !== passwordInput &&
+                document.activeElement !== layoutSelect &&
+                passwordModal.style.display !== 'flex' &&
+                qaModal.style.display !== 'flex') {
+                qrInput.focus();
+            }
+        });
+
+        window.onfocus = () => {
+            if (isLayoutFocused) return;
+            if (activationOverlay.style.display === 'none' && passwordModal.style.display !== 'flex' && qaModal.style.display !== 'flex') {
+                qrInput.focus();
+            }
+        };
+
+        // Q&A Modal Functions
+        function openQaModal() {
+            qaModal.style.display = 'flex';
+        }
+
+        function closeQaModal() {
+            qaModal.style.display = 'none';
+            if (activationOverlay.style.display === 'none') {
+                qrInput.focus();
+            }
+        }
+
+        setInterval(ensureFocus, FOCUS_POLL_MS); // High frequency for Windows scanner reliability
+
+        qrInput.addEventListener('blur', () => {
+            setFocusIndicator('error', 'Focus lost! Click here to resume');
+        });
+
+        qrInput.addEventListener('focus', () => {
+            setFocusIndicator('active', currentMode ? 'Continue to Scan...' : 'Waiting for Scan...');
+        });
+
+        // ============================================================
+        // Packet Parsing  (shared by input preview and processScan)
+        // Formats:
+        // Secret v1: [IB|S|v1|pbkdf2-sha256|600000|SID|IDX|TOT|PAYLOAD]
+        // Global:    [IB|G|SID|IDX|TOT|PAYLOAD]
+        // Legacy:    SID:IDX:TOT:PAYLOAD
+        // ============================================================
+        function parsePacket(str) {
+            // Security boundary:
+            // Only packets that match strict INFOBRIDGE framing proceed to assembly/decryption.
+            // Universal Separator Detection:
+            // Uses a regex backreference (\1) to dynamically identify whatever non-alphanumeric 
+            // character the original '|' was mutated into by the scanner's keyboard layout.
+            // Format: [IB(sep)S(sep)v1(sep)pbkdf2-sha256(sep)600000(sep)SID(sep)IDX(sep)TOT(sep)PAYLOAD]
+            const secretV1 = str.match(/^\[IB([^a-zA-Z0-9])S\1(v\d+)\1([A-Za-z0-9-]+)\1(\d+)\1([a-zA-Z0-9]+)\1(\d+)\1(\d+)\1(.*)\]$/);
+            if (secretV1) {
+                const version = secretV1[2];
+                const kdf = secretV1[3];
+                const iterations = parseInt(secretV1[4], 10);
+                if (version !== 'v1' || kdf !== SECRET_KDF || iterations !== SECRET_KDF_ITERATIONS) {
+                    return null;
+                }
+                return {
+                    mode: 'S',
+                    version,
+                    kdf,
+                    iterations,
+                    sid: secretV1[5],
+                    idx: parseInt(secretV1[6], 10),
+                    tot: parseInt(secretV1[7], 10),
+                    data: secretV1[8]
+                };
+            }
+
+            // Format: [IB(sep)[G|S](sep)SID(sep)IDX(sep)TOT(sep)PAYLOAD]
+            // Legacy Secret packets are accepted for backward compatibility and upgraded to the current KDF policy.
+            const m = str.match(/^\[IB([^a-zA-Z0-9])([GS])\1([a-zA-Z0-9]+)\1(\d+)\1(\d+)\1(.*)\]$/);
+            if (m) return {
+                mode: m[2],
+                version: m[2] === 'S' ? 'legacy' : undefined,
+                kdf: m[2] === 'S' ? SECRET_KDF : undefined,
+                iterations: m[2] === 'S' ? SECRET_KDF_ITERATIONS : undefined,
+                sid: m[3],
+                idx: parseInt(m[4], 10),
+                tot: parseInt(m[5], 10),
+                data: m[6]
+            };
+
+            // Legacy/Alternative format
+            const l = str.match(/([a-zA-Z0-9]+)([^a-zA-Z0-9])(\d+)\2(\d+)\2(.*)/);
+            if (l && l.length === 6) return {
+                mode: 'G',
+                sid: l[1],
+                idx: +l[3],
+                tot: +l[4],
+                data: l[5].trim()
+            };
+            return null;
+        }
+
+        // ============================================================
+        // Input / Scan Handling
+        // ============================================================
+        let debounceTimer = null;
+
+        qrInput.addEventListener('input', (e) => {
+            // Early preview: show loading spinner as QR data streams in
+            let raw = e.target.value.trim();
+            raw = decodeAltCodeStream(raw);
+            const pkt = parsePacket(raw);
+            if (pkt) {
+                if (!currentMode) updateTheme(pkt.mode);
+                initSession(pkt.sid, pkt.tot, pkt.mode, {
+                    version: pkt.version,
+                    kdf: pkt.kdf,
+                    iterations: pkt.iterations
+                });
+                const icon = document.getElementById(`icon-${pkt.sid}-${pkt.idx}`);
+                if (icon && !icon.classList.contains('scanned') && !icon.classList.contains('loading')) {
+                    icon.classList.add('loading');
+                    icon.innerHTML = '<div class="spinner"></div>';
+                }
+            }
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                const val = qrInput.value.trim();
+                if (val.length > 0) {
+                    processScan(val);
+                    qrInput.value = '';
+                    qrInput.focus();
+                }
+            }, 300);
+        });
+
+        qrInput.addEventListener('keydown', (e) => {
+            // Security: Detect unauthorized modifier keys (Ctrl/Meta) in real-time.
+            // These are common in HID injection attacks but never used in valid INFOBRIDGE scans.
+            // Note: Alt key is allowed for Alt Numpad (Universal) mode.
+            if (e.metaKey || e.ctrlKey) {
+                showError('🚨 Security Alert\n\nUnauthorized Modifier Key (Ctrl/GUI) detected.\nScan aborted to prevent potential HID injection.');
+                qrInput.value = '';
+                return;
+            }
+
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (debounceTimer) clearTimeout(debounceTimer);
+            const val = qrInput.value.trim();
+            if (val.length > 0) {
+                processScan(val);
+                qrInput.value = '';
+                qrInput.focus();
+            }
+        });
+
+        // ============================================================
+        // Theme  (switched automatically on first scan of each mode)
+        // ============================================================
+        const THEMES = {
+            G: {
+                cls: 'theme-base64',
+                title: 'Global QR Reader',
+                sub: 'Assembling and decoding multi-part Base64 packets.'
+            },
+            S: {
+                cls: 'theme-secret',
+                title: 'Secret QR Reader',
+                sub: 'Securely reassembling and decrypting with Native Crypto.'
+            },
+        };
+
+        function updateTheme(mode) {
+            currentMode = mode;
+            const t = THEMES[mode];
+            document.body.className = t.cls;
+            mainTitle.innerText = t.title;
+            mainSubtitle.innerText = t.sub;
+            if (focusStatus.classList.contains('active')) focusStatus.innerText = 'Continue to Scan...';
+            injectResetButton();
+        }
+
+        function injectResetButton() {
+            // Re-add reset button if accidentally removed by a title innerHTML overwrite
+            if (!document.querySelector('.btn-reset-top')) {
+                const btn = document.createElement('button');
+                btn.className = 'btn-reset-top';
+                btn.onclick = resetAll;
+                btn.title = 'Reset all data';
+                btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>';
+                document.getElementById('mainTitle').appendChild(btn);
+            }
+        }
+
+        function resetAll() {
+            if (!confirm('Clear all scanned data and reset the Reader?')) return;
+
+            // Clear state
+            qrBuffer = {};
+            currentMode = null;
+            activeSid = null;
+            sessionList.innerHTML = '';
+            finalResult.style.display = 'none';
+            errorArea.style.display = 'none';
+            scanLog.value = '';
+
+            // Reset UI to neutral theme
+            document.body.className = 'theme-neutral';
+            document.getElementById('titleText').innerText = 'INFOBRIDGE Reader';
+            mainSubtitle.innerText = 'Now, you can start scanning QR codes.';
+            focusStatus.innerText = 'Waiting for Scan...';
+            titleIcon.innerHTML = '<img src="images/icon-512.png" alt="Icon" style="width: 32px; height: 32px; border-radius: 8px;">';
+            injectResetButton();
+
+            // Play reset button rotation animation
+            const btn = document.querySelector('.btn-reset-top');
+            if (btn) {
+                btn.classList.add('rotate-anim');
+                setTimeout(() => btn.classList.remove('rotate-anim'), 600);
+            }
+            qrInput.focus();
+        }
+
+        // =   Session Processing
+        // ============================================================
+        function decodeAltCodeStream(raw) {
+            // Internal helper to perform the actual digit-to-char conversion
+            function performDecode(data) {
+                let decoded = "";
+                for (let i = 0; i < data.length; i += 5) {
+                    let code = parseInt(data.substr(i, 5), 10);
+                    if (!isNaN(code)) decoded += String.fromCharCode(code);
+                }
+                return decoded;
+            }
+
+            // Automatic Hardware Detection (e.g. Mac users with Alt-mode scanners)
+            // If the entire string is purely numeric and follows the (00XXX) pattern for its whole length,
+            // we can be 99.99% certain it's an Alt Numpad stream and should be decoded.
+            if (/^(00[0-9]{3})+$/.test(raw) && raw.length >= 10) {
+                return performDecode(raw);
+            }
+
+            return raw;
+        }
+
+        function processScan(rawText) {
+            if (!rawText) return;
+
+            // Handle Alt Numpad universal mode streams
+            rawText = decodeAltCodeStream(rawText);
+
+            // Normalize full-width ASCII → half-width (e.g. from some scanners)
+            rawText = rawText.replace(/[！-～]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+
+            // ==========================================
+            // Security Check: HID Attack Mitigation
+            // ==========================================
+            // INFOBRIDGE payloads are strict Base64+Headers. If control characters (\x00-\x1F, \x7F) are present,
+            // it indicates a potentially malicious QR code attempting a Keystroke Injection attack.
+            if (/[\x00-\x09\x0B-\x1F\x7F]/.test(rawText)) {
+                showError('🚨 Security Alert\n\nYou are scanning a QR code not generated by INFOBRIDGE.\nScan aborted immediately due to the detection of illegal Control Characters.');
+                return;
+            }
+
+            // Append to debug log (Show decoded text)
+            scanLog.value += `${rawText}\n`;
+            scanLog.scrollTop = scanLog.scrollHeight;
+
+            // Flash "Scan successful" feedback
+            scanFeedback.style.opacity = '1';
+            setTimeout(() => {
+                scanFeedback.style.opacity = '0';
+            }, 1000);
+
+            // Stage 1: Parse packet framing (strict INFOBRIDGE format)
+            let pkt = parsePacket(rawText);
+
+            // Stage 2 (fallback): Try keyboard-layout correction for mutated separators
+            if (!pkt) {
+                const corrected = applyLayoutCorrection(rawText);
+                pkt = parsePacket(corrected);
+                if (pkt) {
+                    rawText = corrected; // Continue with corrected text
+                    scanLog.value += `(Layout Corrected: ${document.getElementById('layoutCorrection').value})\n`;
+                }
+            }
+
+            if (!pkt) {
+                let errorMsg = '⚠️ Invalid format. Missing INFOBRIDGE headers.';
+
+                // Refined detection: If it has repeated separators but failed parsing, it's a malformed packet
+                const sepCount = (rawText.match(/[^a-zA-Z0-9]/g) || []).length;
+
+                if (/[縺繝譛竏]/.test(rawText)) {
+                    errorMsg = '⚠️ Encoding Mismatch: Detected UTF-8 data being read as Shift_JIS.';
+                } else if (rawText.includes('\uFFFD')) {
+                    errorMsg = '⚠️ Encoding Mismatch: Detected character corruption (Replacement Character detected). Check Keyboard Layout.';
+                } else if (sepCount >= 5) {
+                    errorMsg = '⚠️ Malformed Packet: Headers detected but structure is invalid.';
+                } else if (/^[\x20-\x7E]+$/.test(rawText)) {
+                    errorMsg = '⚠️ Standard Text Detected: This is not an INFOBRIDGE packet.';
+                }
+
+                showError(`${errorMsg}\n\nPlease ensure you are scanning a valid INFOBRIDGE QR code.`);
+                return;
+            }
+
+            const {
+                mode,
+                version,
+                kdf,
+                iterations,
+                sid,
+                idx,
+                tot,
+                data
+            } = pkt;
+            if (currentMode !== mode) updateTheme(mode);
+
+            if (qrBuffer[sid]?.parts[idx] !== undefined) {
+                showError(`⚠️ Piece No.${idx + 1} already scanned.`);
+                return;
+            }
+
+            errorArea.style.display = 'none';
+            initSession(sid, tot, mode, { version, kdf, iterations });
+            qrBuffer[sid].parts[idx] = data;
+            updateSessionUI(sid, idx);
+
+            // Check if all pieces are collected
+            if (Object.keys(qrBuffer[sid].parts).length === tot) {
+                if (mode === 'S') requestPassword(sid);
+                else assembleAndDecode(sid);
+            }
+        }
+
+        function showError(msg) {
+            // Centralized error sink for UI + security alerts
+            errorArea.innerText = msg;
+            errorArea.style.display = 'block';
+        }
+
+        function initSession(sid, tot, mode, cryptoParams = {}) {
+            if (qrBuffer[sid]) return;
+            // New session: clear previous session data and UI
+            qrBuffer = {};
+            sessionList.innerHTML = '';
+            finalResult.style.display = 'none';
+            qrBuffer[sid] = {
+                total: tot,
+                parts: {},
+                mode,
+                version: cryptoParams.version,
+                kdf: cryptoParams.kdf,
+                iterations: cryptoParams.iterations,
+                failedAttempts: 0
+            };
+            createSessionUI(sid, tot);
+        }
+
+        function createSessionUI(sid, tot) {
+            const icons = Array.from({
+                length: tot
+            }, (_, i) =>
+                `<div class="qr-icon" id="icon-${sid}-${i}">${standardIcon}</div>`
+            ).join('');
+            sessionList.innerHTML = `
+            <div class="session-card" id="session-${sid}">
+                <div class="session-header">
+                    <span class="session-id">ID: ${sid}</span>
+                    <span class="progress-text" id="prog-text-${sid}">0 / ${tot} Complete</span>
+                </div>
+                <div class="qr-grid">${icons}</div>
+            </div>`;
+        }
+
+        function updateSessionUI(sid, latestIdx) {
+            const {
+                parts,
+                total
+            } = qrBuffer[sid];
+            document.getElementById(`prog-text-${sid}`).innerText = `${Object.keys(parts).length} / ${total} Complete`;
+            const icon = document.getElementById(`icon-${sid}-${latestIdx}`);
+            if (icon) {
+                icon.classList.remove('loading');
+                icon.classList.add('scanned');
+                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="24" height="24"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+            }
+        }
+
+        // ============================================================
+        // Assembly & Decoding
+        // ============================================================
+        const KEYMAPS = {
+            'jis': {
+                '~': '+', '^': '=', // US Scanner on JIS OS
+                ':': '+', '_': '='  // JIS Scanner on US OS
+            },
+            'azerty_fr': {
+                'q': 'a', 'Q': 'A', 'a': 'q', 'A': 'Q', // A/Q swap
+                'z': 'w', 'Z': 'W', 'w': 'z', 'W': 'Z', // Z/W swap
+                ',': 'm', '?': 'M', // M becomes , or ?
+                ':': '/', // / becomes :
+                '&': '1', 'é': '2', '"': '3', '\'': '4', '(': '5', // Numbers to symbols
+                '-': '6', 'è': '7', '_': '8', 'ç': '9', 'à': '0'
+            },
+            'qwertz_de': {
+                'z': 'y', 'Z': 'Y', 'y': 'z', 'Y': 'Z', // Y/Z swap
+                '`': '+', '´': '=', '-': '/' // Base64 symbols
+            },
+            'qwerty_es': {
+                '¿': '+', '¡': '=', '-': '/'
+            },
+            'qwerty_it': {
+                '^': '+', 'ì': '=', '-': '/'
+            },
+            'nordic': {
+                '?': '+', '+': '=', '-': '/'
+            },
+            'portuguese': {
+                '*': '+', '«': '=', '-': '/'
+            },
+            'cyrillic': {
+                'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y', 'г': 'u', 'ш': 'i', 'щ': 'o', 'з': 'p',
+                'ф': 'a', 'ы': 's', 'в': 'd', 'а': 'f', 'п': 'g', 'р': 'h', 'о': 'j', 'л': 'k', 'д': 'l',
+                'я': 'z', 'ч': 'x', 'с': 'c', 'м': 'v', 'и': 'b', 'т': 'n', 'ь': 'm',
+                'Й': 'Q', 'Ц': 'W', 'У': 'E', 'К': 'R', 'Е': 'T', 'Н': 'Y', 'Г': 'U', 'Ш': 'I', 'Щ': 'O', 'З': 'P',
+                'Ф': 'A', 'Ы': 'S', 'В': 'D', 'А': 'F', 'П': 'G', 'Р': 'H', 'О': 'J', 'Л': 'K', 'Д': 'L',
+                'Я': 'Z', 'Ч': 'X', 'С': 'C', 'М': 'V', 'И': 'B', 'Т': 'N', 'Ь': 'M',
+                '.': '/', ',': '?', 'б': ',', 'ю': '.'
+            },
+            'korean': {
+                'ㅂ': 'q', 'ㅈ': 'w', 'ㄷ': 'e', 'ㄱ': 'r', 'ㅅ': 't', 'ㅛ': 'y', 'ㅕ': 'u', 'ㅑ': 'i', 'ㅐ': 'o', 'ㅔ': 'p',
+                'ㅁ': 'a', 'ㄴ': 's', 'ㅇ': 'd', 'ㄹ': 'f', 'ㅎ': 'g', 'ㅗ': 'h', 'ㅓ': 'j', 'ㅏ': 'k', 'ㅣ': 'l',
+                'ㅋ': 'z', 'ㅌ': 'x', 'ㅊ': 'c', 'ㅍ': 'v', 'ㅠ': 'b', 'ㅜ': 'n', 'ㅡ': 'm',
+                'ㅃ': 'Q', 'ㅉ': 'W', 'ㄸ': 'E', 'ㄲ': 'R', 'ㅆ': 'T', 'ㅒ': 'O', 'ㅖ': 'P'
+            },
+            'thai': {
+                'ๆ': 'q', 'ไ': 'w', 'ำ': 'e', 'พ': 'r', 'ะ': 't', 'ั': 'y', 'ี': 'u', 'ร': 'i', 'น': 'o', 'ย': 'p',
+                'ฟ': 'a', 'ห': 's', 'ก': 'd', 'ด': 'f', 'เ': 'g', '้': 'h', '่': 'j', 'า': 'k', 'ส': 'l',
+                'ผ': 'z', 'ป': 'x', 'แ': 'c', 'อ': 'v', 'ิ': 'b', 'ื': 'n', 'ท': 'm',
+                '๐': 'Q', '"': 'W', 'ฎ': 'E', 'ฑ': 'R', 'ธ': 'T', 'ํ': 'Y', '๊': 'U', 'ณ': 'I', 'ฯ': 'O', 'ญ': 'P',
+                'ฤ': 'A', 'ฆ': 'S', 'ฏ': 'D', 'โ': 'F', 'ฌ': 'G', '็': 'H', '๋': 'J', 'ษ': 'K', 'ศ': 'L',
+                '(': 'Z', ')': 'X', 'ฉ': 'C', 'ฮ': 'V', 'ฺ': 'B', '์': 'N', '?': 'M',
+                'ใ': '.', 'ฝ': '/', 'ง': ':', 'ฬ': '?', '+': '+'
+            }
+        };
+
+        function applyLayoutCorrection(payload) {
+            const mode = document.getElementById('layoutCorrection').value;
+            if (mode === 'none' || !KEYMAPS[mode]) return payload;
+
+            const map = KEYMAPS[mode];
+            return payload.split('').map(c => map[c] !== undefined ? map[c] : c).join('');
+        }
+
+        function redecodeCurrentSession() {
+            // Re-decode the current completed session when the layout profile is changed
+            for (const sid in qrBuffer) {
+                if (Object.keys(qrBuffer[sid].parts).length === qrBuffer[sid].total) {
+                    if (qrBuffer[sid].mode === 'G') {
+                        errorArea.style.display = 'none';
+                        assembleAndDecode(sid);
+                    } else if (qrBuffer[sid].mode === 'S' && activeSid === null) {
+                        requestPassword(sid);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Concatenate all received payload chunks in order → single Base64 string
+        function assemblePayload(sid) {
+            const {
+                parts,
+                total
+            } = qrBuffer[sid];
+            let rawPayload = Array.from({
+                length: total
+            }, (_, i) => parts[i]).join('');
+
+            return applyLayoutCorrection(rawPayload);
+        }
+
+        function assembleAndDecode(sid) {
+            try {
+                showResult(b64DecodeUnicode(assemblePayload(sid)));
+            } catch (e) {
+                alert('Decode failed. Data may be corrupt.');
+            }
+        }
+
+        async function assembleAndDecrypt(sid, password) {
+            try {
+                const result = await nativeDecrypt(
+                    assemblePayload(sid),
+                    password,
+                    qrBuffer[sid].iterations || SECRET_KDF_ITERATIONS
+                );
+                qrBuffer[sid].failedAttempts = 0; // Reset on success
+                showResult(result);
+            } catch (e) {
+                if (qrBuffer[sid]) {
+                    qrBuffer[sid].failedAttempts++;
+                    const remaining = MAX_DECRYPT_ATTEMPTS - qrBuffer[sid].failedAttempts;
+                    if (remaining <= 0) {
+                        showError('🚨 Session Locked\n\nToo many failed decryption attempts. Data has been cleared for security.');
+                        delete qrBuffer[sid];
+                        sessionList.innerHTML = '';
+                    } else {
+                        alert(`Decryption failed. Check password.\n(${remaining} attempts remaining)`);
+                        requestPassword(sid); // Re-open modal
+                    }
+                }
+            }
+        }
+
+        function showResult(text) {
+            decodedOutput.innerText = text;
+            finalResult.style.display = 'block';
+            window.scrollTo({
+                top: document.body.scrollHeight,
+                behavior: 'smooth'
+            });
+        }
+
+        // Base64 string → decoded text (UTF-8 or Shift-JIS fallback)
+        function b64DecodeUnicode(str) {
+            try {
+                const bin = atob(str.replace(/[^A-Za-z0-9+/=]/g, ''));
+                const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+                return decodeBytes(bytes);
+            } catch (e) {
+                return '[Base64 Error]\n' + str;
+            }
+        }
+
+        // AES-256-GCM decryption via WebCrypto API  (PBKDF2 key derivation)
+        // Payload layout: [ salt(16) | nonce(12) | ciphertext+tag ]
+        async function nativeDecrypt(base64Data, password, iterations = SECRET_KDF_ITERATIONS) {
+            const raw = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+            const salt = raw.slice(0, 16);
+            const nonce = raw.slice(16, 28);
+            const ciphertext = raw.slice(28);
+
+            const baseKey = await crypto.subtle.importKey(
+                'raw', new TextEncoder().encode(password), {
+                name: 'PBKDF2'
+            }, false, ['deriveKey']);
+            const aesKey = await crypto.subtle.deriveKey({
+                name: 'PBKDF2',
+                salt,
+                iterations,
+                hash: 'SHA-256'
+            },
+                baseKey, {
+                name: 'AES-GCM',
+                length: 256
+            }, false, ['decrypt']);
+            const buf = await crypto.subtle.decrypt({
+                name: 'AES-GCM',
+                iv: nonce,
+                tagLength: 128
+            }, aesKey, ciphertext);
+            return decodeBytes(new Uint8Array(buf));
+        }
+
+        // Auto-detect encoding: UTF-8 first, then Shift-JIS, then lossy UTF-8
+        function decodeBytes(bytes) {
+            for (const enc of ['utf-8', 'shift-jis']) {
+                try {
+                    return new TextDecoder(enc, {
+                        fatal: true
+                    }).decode(bytes);
+                } catch { }
+            }
+            return new TextDecoder('utf-8').decode(bytes);
+        }
+
+        // ============================================================
+        // Password Modal  (Secret mode only)
+        // ============================================================
+        function requestPassword(sid) {
+            activeSid = sid;
+            modalSid.innerText = sid;
+            passwordModal.style.display = 'flex';
+            passwordInput.value = '';
+            passwordInput.focus();
+        }
+
+        function closeModal() {
+            passwordModal.style.display = 'none';
+            activeSid = null;
+        }
+
+        function submitPassword() {
+            const pwd = passwordInput.value;
+            if (!pwd) return;
+            const sid = activeSid;
+            closeModal();
+            assembleAndDecrypt(sid, pwd);
+        }
+
+        passwordInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') submitPassword();
+        });
+    </script>
+
+</body>
+
+</html>
